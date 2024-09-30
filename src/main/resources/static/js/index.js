@@ -27,6 +27,7 @@ document.addEventListener("DOMContentLoaded", function() {
     const bookingForm = document.getElementById('bookingForm');
     const flightIdInput = document.getElementById('flightId');
     const flightPriceInput = document.getElementById('flightPrice');
+    const seatsInput = document.getElementById('seatsInput');
 
     flightForm.addEventListener('submit', function(event) {
         console.log("se face CEVA!");
@@ -61,7 +62,8 @@ document.addEventListener("DOMContentLoaded", function() {
                             `;
                            flightDetailsDiv.style.display = 'block';
                            flightIdInput.value = flight.idflights;
-                           flightPriceInput.value = flight.price;
+                           selectedFlightPrice = flight.price;
+                           updateTotalPrice();
                        });
                        flightList.appendChild(li);
                    });
@@ -76,6 +78,16 @@ document.addEventListener("DOMContentLoaded", function() {
             });
     });
 
+    function updateTotalPrice() {
+        const seats = parseInt(seatsInput.value, 10);  // Get the number of seats as an integer
+        if (!isNaN(seats) && seats > 0) {
+            const totalPrice = selectedFlightPrice * seats;
+            flightPriceInput.value = totalPrice;  // Update the total price input
+        } else {
+            flightPriceInput.value = 0;  // If the seat input is invalid, reset the price
+        }
+    }
+    seatsInput.addEventListener('input', updateTotalPrice);
 
     bookingForm.addEventListener('submit', function(event) {
         event.preventDefault();
@@ -85,7 +97,7 @@ document.addEventListener("DOMContentLoaded", function() {
         const flightId = document.getElementById('flightId').value; // Make sure the correct ID is used for flightId input
         const flightPrice = document.getElementById('flightPrice').value;
         const iban = "ROSKY1";
-        const seats = document.getElementById('seats').value;
+        const seats = document.getElementById('seatsInput').value;
 
         // Debugging alert to show the flight info
         // alert(`Booking confirmed for ${name} with Flight ID: ${flightId}`);
