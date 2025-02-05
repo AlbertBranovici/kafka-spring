@@ -3,23 +3,23 @@ package main.services;
 import com.paypal.core.PayPalEnvironment;
 import com.paypal.core.PayPalHttpClient;
 import com.paypal.http.HttpResponse;
-import com.paypal.orders.AmountWithBreakdown;
 import com.paypal.orders.*;
-import com.paypal.orders.Item;
 import main.exception.OrderNotPayedException;
 import main.models.*;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Service;
-import reactor.core.publisher.Mono;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.NoSuchElementException;
+
+import main.services.utility;
+import main.services.BookingService;
 
 @Service
 public class PayPalService {
@@ -30,39 +30,45 @@ public class PayPalService {
     private final CompanyPlatformService companyService;
     private final long AVAILABLE_TIME = 10000 * 6;
     private static final Logger log = LoggerFactory.getLogger(PayPalService.class.getName());
-    private final KafkaProducerService kafkaProducer;
     private static String iban = "ROSKY1";
+    private final FlightService flightService;
+    private final BookingService bookingService;
 
     @Autowired
     public PayPalService(@Value("http://localhost:8081/payment/success") String returnUlr,
                          @Value("http://localhost:8081/payment/cancel") String cancelUrl,
                          OrderService orderService,
-                         CompanyPlatformService companyService, KafkaProducerService kafkaProducer) {
+                         CompanyPlatformService companyService,
+                         FlightService flightService,
+                         BookingService bookingService) {
         this.returnUlr = returnUlr;
         this.cancelUrl = cancelUrl;
         this.orderService = orderService;
         this.companyService = companyService;
-        this.kafkaProducer = kafkaProducer;
+        this.flightService = flightService;
+        this.bookingService = bookingService;
     }
 
-    @KafkaListener(topics = "bookings", groupId = "test_group")
-    public void listenToKafkaTopic(ConsumerRecord<String, BookingEntity> record){
-        BookingEntity booking = record.value();
+    public PaymentOrder createPayment(Double payAmount, String iban, String flightId, String bookingReference) {
+        log.info("Creating payment for amount: {}, IBAN: {}, Flight ID: {}, Booking Reference: {}", payAmount, iban, flightId, bookingReference);
 
-        Double total = (double) booking.getPrice();
-        String flightId = String.valueOf(booking.getFlight().getIdflights());
-        String bookingReference = booking.getBookingReference();
-        PaymentOrder paymentOrder = createPayment(total, iban, flightId, bookingReference);
-        
-        if ("Error".equals(paymentOrder.getStatus())) {
-            log.error("Payment error: Payment creation failed");
+        SecretEntity companyPlatform = companyService.findByIban(iban);
+        if (companyPlatform != null) {
+            String decryptedClientId = utility.decrypt(companyPlatform.getClientId());
+            String decryptedClientSecret = utility.decrypt(companyPlatform.getClientSecret());
+
+            log.info("Using PayPal Client ID: {}", decryptedClientId);
+            log.info("Using PayPal Client Secret: {}", decryptedClientSecret);
+
+            PayPalEnvironment environment = new PayPalEnvironment.Sandbox(decryptedClientId, decryptedClientSecret);
+            PayPalHttpClient payPalHttpClient = new PayPalHttpClient(environment);
         } else {
-            log.info("Payment order created: {}", paymentOrder.getStatus());
+            log.error("Company platform not found for IBAN: {}", iban);
+            PaymentOrder paymentOrder = new PaymentOrder();
+            paymentOrder.setStatus("Error");
+            return paymentOrder;
         }
-    }
 
-
-    public PaymentOrder createPayment(Double payAmount, String iban, String flightId, String bookingReference){
         OrderRequest orderRequest = new OrderRequest();
         orderRequest.checkoutPaymentIntent("CAPTURE");
 
@@ -100,67 +106,83 @@ public class PayPalService {
         orderRequest.applicationContext(applicationContext);
         OrdersCreateRequest ordersCreateRequest = new OrdersCreateRequest().requestBody(orderRequest);
 
-        CompanyPlatform companyPlatform = companyService.findByIban(iban).block();
-
         if (companyPlatform == null) {
+            log.info("Could not find company platform for IBAN: {}", iban);
             PaymentOrder paymentOrder = new PaymentOrder();
             paymentOrder.setStatus("Error");
             return paymentOrder;
         }
 
         try {
-            PayPalEnvironment environment = new PayPalEnvironment.Sandbox(companyPlatform.getClientId(), companyPlatform.getClientSecret());
+            PayPalEnvironment environment = new PayPalEnvironment.Sandbox(
+                utility.decrypt(companyPlatform.getClientId()),
+                utility.decrypt(companyPlatform.getClientSecret())
+            );
             PayPalHttpClient payPalHttpClient = new PayPalHttpClient(environment);
             HttpResponse<Order> orderHttpResponse = payPalHttpClient.execute(ordersCreateRequest);
-                       Order order = orderHttpResponse.result();
+            Order order = orderHttpResponse.result();
+
+            log.info("PayPal order created: {}", order);
 
             String redirectUrl = order.links().stream()
                     .filter(link -> link.rel().equals("approve"))
                     .findFirst()
-                    .orElseThrow(NoSuchElementException::new)
+                    .orElseThrow(() -> {
+                        log.error("Approval URL not found in PayPal order response");
+                        return new NoSuchElementException("Approval URL not found");
+                    })
                     .href();
-            OrderStatus orderStatus = new OrderStatus();
+
+            log.info("Approval URL: {}", redirectUrl);
+
+            OrderEntity orderStatus = new OrderEntity();
             orderStatus.setOrderId(order.id());
+            
             orderStatus.setStatus("INITIATED");
             orderStatus.setIban(iban);
-            orderStatus.setFlightId(flightId);
+            orderStatus.setFlight(flightService.findFlightById(Long.parseLong(flightId)));
             orderStatus.setBookingReference(bookingReference);
             orderStatus.setCreationTime(System.currentTimeMillis());
             orderStatus.setExpirationTime(orderStatus.getCreationTime() + AVAILABLE_TIME);
-                       log.info("Order created: {}", orderStatus);
 
-            orderService.addOrder(orderStatus).subscribe();
+            log.info("Order entity created: {}", orderStatus);
 
-            PaymentOrder paymentOrder = new PaymentOrder("success", order.id(), redirectUrl);
-            try {
-                Runtime.getRuntime().exec("open " + redirectUrl);
-            } catch (Exception e) {
-                log.error("Failed to open redirect URL: {}", e.getMessage());
+            orderService.addOrder(orderStatus);
+
+            // -----
+            BookingEntity booking = bookingService.findByReference(orderStatus.getBookingReference());
+            if(booking != null){
+                booking.setStatus("INITIATED");
+                bookingService.save(booking);
             }
-            return paymentOrder;
 
+            return new PaymentOrder("success", order.id(), redirectUrl);
+        } catch (IOException e) {
+            log.error("Error during PayPal environment setup: {}", e.getMessage(), e);
+            throw new RuntimeException("Failed to set up PayPal environment", e);
         } catch (Exception e) {
-            log.error("Error creating payment: {}", e.getMessage());
-            PaymentOrder paymentOrder = new PaymentOrder();
-            paymentOrder.setStatus("Error");
-            return paymentOrder;
+            log.error("Unexpected error: {}", e.getMessage(), e);
+            throw new RuntimeException("Unexpected error occurred", e);
         }
     }
 
-    public GetOrder getOrder(String orderId, String iban){
+    public GetOrder getOrder(String orderId, String iban) {
         OrdersGetRequest ordersGetRequest = new OrdersGetRequest(orderId);
-        CompanyPlatform companyPlatform = companyService.findByIban(iban).block();
+        SecretEntity companyPlatform = companyService.findByIban(iban);
 
         if (companyPlatform == null) {
             throw new RuntimeException("Company not found for IBAN: " + iban);
         }
 
-        PayPalEnvironment environment = new PayPalEnvironment.Sandbox(companyPlatform.getClientId(), companyPlatform.getClientSecret());
-        PayPalHttpClient payPalHttpClient = new PayPalHttpClient(environment);
-
         try {
+            PayPalEnvironment environment = new PayPalEnvironment.Sandbox(
+                utility.decrypt(companyPlatform.getClientId()),
+                utility.decrypt(companyPlatform.getClientSecret())
+            );
+            PayPalHttpClient payPalHttpClient = new PayPalHttpClient(environment);
+
             HttpResponse<Order> httpResponse = payPalHttpClient.execute(ordersGetRequest);
-                       Order order = httpResponse.result();
+            Order order = httpResponse.result();
             GetOrder getOrderObj = new GetOrder();
             getOrderObj.setPayee(order.purchaseUnits().get(0).payee());
             getOrderObj.setPayer(order.payer());
@@ -169,136 +191,82 @@ public class PayPalService {
             getOrderObj.setPayerEmail(getOrderObj.getPayer().email());
 
             return getOrderObj;
-        } catch (IOException e) {
+        } catch (Exception e) {
             throw new RuntimeException(e);
         }
-    
     }
-    public CompletedOrder captureOrder(String token, String iban){
-        OrdersCaptureRequest ordersCaptureRequest = new OrdersCaptureRequest(token);
-        CompanyPlatform companyPlatform = companyService.findByIban(iban).block();
-        OrderStatus orderStatus = orderService.findByOrderId(token).block();
-        long callTime = System.currentTimeMillis();
 
+    @Transactional
+    public CompletedOrder captureOrder(String token, String payerID, String iban) {
+        log.info("Capturing order with token: {}, payerID: {}, IBAN: {}", token, payerID, iban);
+    
+        OrdersCaptureRequest ordersCaptureRequest = new OrdersCaptureRequest(token);
+        SecretEntity companyPlatform = companyService.findByIban(iban);
+        OrderEntity orderStatus = orderService.findByOrderId(token);
+        long callTime = System.currentTimeMillis();
+    
         if (orderStatus == null) {
             throw new RuntimeException("Order not found for token: " + token);
         }
-
+    
         if (companyPlatform == null) {
             throw new RuntimeException("Company not found for IBAN: " + iban);
         }
-
-        if(callTime > orderStatus.getExpirationTime() && !orderStatus.getStatus().equals("SUCCESS")){
+    
+        if (callTime > orderStatus.getExpirationTime() && !orderStatus.getStatus().equals("SUCCESS")) {
             orderStatus.setStatus("CANCELED");
-            sendOrderToKafka(orderStatus);
+            // -----
+            BookingEntity booking = bookingService.findByReference(orderStatus.getBookingReference());
+            if(booking != null){
+                booking.setStatus("CANCELED");
+                bookingService.save(booking);
+            }
             orderService.updateOrder(orderStatus, token).block();
-            return new CompletedOrder(orderStatus.getStatus(), orderStatus.getId());
+            return new CompletedOrder(orderStatus.getStatus(), String.valueOf(orderStatus.getId()));
         } else {
-            PayPalEnvironment environment = new PayPalEnvironment.Sandbox(companyPlatform.getClientId(), companyPlatform.getClientSecret());
-            PayPalHttpClient payPalHttpClient = new PayPalHttpClient(environment);
             try {
+                String decryptedClientId = utility.decrypt(companyPlatform.getClientId());
+                String decryptedClientSecret = utility.decrypt(companyPlatform.getClientSecret());
+
+                PayPalEnvironment environment = new PayPalEnvironment.Sandbox(decryptedClientId, decryptedClientSecret);
+                PayPalHttpClient payPalHttpClient = new PayPalHttpClient(environment);
+    
                 HttpResponse<Order> httpResponse = payPalHttpClient.execute(ordersCaptureRequest);
                 Order order = httpResponse.result();
-                orderStatus.setStatus("SUCCESS");
-                OrderStatus updatedOrderStatus = orderService.updateOrder(orderStatus, orderStatus.getOrderId()).block();
-                if (updatedOrderStatus.getStatus().equals("SUCCESS")) {
-                    sendOrderToKafka(updatedOrderStatus);
+
+                if(!order.payer().payerId().equals(payerID)){
+                    throw new RuntimeException("Payer ID does not match");
                 }
-                return new CompletedOrder(updatedOrderStatus.getStatus(), updatedOrderStatus.getId());
-            } catch(IOException ex) {
-                if(ex.getMessage().contains("ORDER_NOT_APPROVED")){
+    
+                log.info("Order captured: {}", order);
+    
+                orderStatus.setStatus("SUCCESS");
+                OrderEntity updatedOrderStatus = orderService.updateOrder(orderStatus, orderStatus.getOrderId()).block();
+                // -----
+                BookingEntity booking = bookingService.findByReference(orderStatus.getBookingReference());
+                if(booking != null){
+                    booking.setStatus("CONFIRMED");
+                    bookingService.save(booking);
+                }
+
+                return new CompletedOrder(updatedOrderStatus.getStatus(), String.valueOf(updatedOrderStatus.getId()));
+            } catch (Exception ex) {
+                log.error("Error capturing order: {}", ex.getMessage(), ex);
+                if (ex.getMessage().contains("ORDER_ALREADY_CAPTURED")) {
+                    log.info("Order already captured: {}", token);
+                    return new CompletedOrder("SUCCESS", String.valueOf(orderStatus.getId()));
+                } else if (ex.getMessage().contains("ORDER_NOT_APPROVED")) {
                     orderStatus.setStatus("CANCELED");
-                    sendOrderToKafka(orderStatus);
-                    OrderStatus updatedOrder = orderService.updateOrder(orderStatus, token).block();
-                    return new CompletedOrder(updatedOrder.getStatus(), updatedOrder.getId());
+                    OrderEntity updatedOrder = orderService.updateOrder(orderStatus, token).block();
+                    return new CompletedOrder(updatedOrder.getStatus(), String.valueOf(updatedOrder.getId()));
                 } else {
                     throw new OrderNotPayedException("Error processing payment: " + ex.getMessage());
                 }
             }
         }
     }
-//    public Mono<CompletedOrder> captureOrder(String token, String iban){
-//        OrdersCaptureRequest ordersCaptureRequest = new OrdersCaptureRequest(token);
-//        Mono<CompanyPlatform> monoCompany = companyService.findByIban(iban);
-//        Mono<OrderStatus> orderStatusMono = orderService.findByOrderId(token);
-//        long callTime = System.currentTimeMillis();
-//
-//        Mono<CompletedOrder> resultMono = orderStatusMono.flatMap(orderStatus -> {
-//            if(callTime > orderStatus.getExpirationTime() && !orderStatus.getStatus().equals("SUCCESS")){
-//                orderStatus.setStatus("CANCELED");
-//                orderService.updateOrder(orderStatus, token).subscribe();
-//
-//                return Mono.just(new CompletedOrder(orderStatus.getStatus(), orderStatus.getId()));
-//            } else {
-//                monoCompany.subscribe(e -> {
-//                    PayPalEnvironment environment = new PayPalEnvironment.Sandbox(e.getClientId(), e.getClientSecret());
-//                    PayPalHttpClient payPalHttpClient = new PayPalHttpClient(environment);
-//                    try{
-//                        HttpResponse<Order> httpResponse = payPalHttpClient.execute(ordersCaptureRequest);
-//                        Order order = httpResponse.result();
-//                        orderStatus.setStatus("SUCCESS");
-//                        //aici de apelat functia pentru kafka de trimis mesaje
-//                        orderService.updateOrder(orderStatus, orderStatus.getOrderId()).subscribe();
-//                    } catch(IOException ex){
-//                        throw new OrderNotPayedException("Payment with id " + token + " was not paid by following the given link");
-//
-//                    }
-//                });
-//                return Mono.just(new CompletedOrder(orderStatus.getStatus(), orderStatus.getId()));
-//            }
-//        });
-//        return resultMono;
-//    }
-//
-    private void sendOrderToKafka(OrderStatus orderStatus){
-        kafkaProducer.sendMessage("payments",orderStatus);
-    }
 
-//
-//    private final APIContext apiContext;
-//
-//    public Payment createPayment(Double total,
-//                                 String currency,
-//                                 String method,
-//                                 String intent,
-//                                 String description,
-//                                 String cancelUrl,
-//                                 String successUrl) throws PayPalRESTException {
-//        Amount amount = new Amount();
-//        amount.setCurrency(currency);
-//        amount.setTotal(String.format(Locale.forLanguageTag(currency),"%.2f",total));
-//
-//        Transaction transaction = new Transaction();
-//        transaction.setDescription(description);
-//        transaction.setAmount(amount);
-//
-//        List<Transaction> transactions = new ArrayList<>();
-//        transactions.add(transaction);
-//
-//        Payer payer = new Payer();
-//        payer.setPaymentMethod(method);
-//
-//        Payment payment = new Payment();
-//        payment.setIntent(intent);
-//        payment.setPayer(payer);
-//        payment.setTransactions(transactions);
-//
-//        RedirectUrls redirectUrls = new RedirectUrls();
-//        redirectUrls.setCancelUrl(cancelUrl);
-//        redirectUrls.setReturnUrl(successUrl);
-//        payment.setRedirectUrls(redirectUrls);
-//
-//        return payment.create(apiContext);
-//
-//    }
-//
-//    public Payment executePayment(String paymentId, String payerId) throws PayPalRESTException {
-//        Payment payment = new Payment();
-//        payment.setId(paymentId);
-//
-//        PaymentExecution paymentExecution = new PaymentExecution();
-//        paymentExecution.setPayerId(payerId);
-//
-//        return payment.execute(apiContext, paymentExecution);
-//    }
+    public String getCancelUrl() {
+        return cancelUrl;
+    }
 }

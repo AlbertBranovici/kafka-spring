@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 import java.util.Optional;
 import java.util.Random;
+import java.util.NoSuchElementException;
 
 @Service
 public class FlightService {
@@ -46,6 +47,7 @@ public class FlightService {
     }
 
     public List<FlightEntity> getFlightByArrival(String arrival){
+        System.out.println("se cauta");
         return repo.findByArrivalLocation(arrival);
     }
     public void saveFlight(FlightDTO dto) {
@@ -73,6 +75,11 @@ public class FlightService {
         f.setDepartureTime(dto.getDeparture().getScheduledTime());
 
         repo.save(f);
+    }
+
+    public FlightEntity findFlightById(Long flightId) {
+        return repo.findByIdflights(flightId)
+                .orElseThrow(() -> new NoSuchElementException("Flight not found for ID: " + flightId));
     }
 
 }

@@ -11,6 +11,7 @@ import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -19,12 +20,14 @@ import java.util.UUID;
 public class BookingController {
     private final BookingService bookingService;
     private final FlightService flightService;
+    private final PayPalService payPalService;
     private static final Logger log = LoggerFactory.getLogger(GetFlightData.class.getName());
 
     @Autowired
-    public BookingController(BookingService bookingService, FlightService flightService) {
+    public BookingController(BookingService bookingService, FlightService flightService, PayPalService payPalService) {
         this.bookingService = bookingService;
         this.flightService = flightService;
+        this.payPalService = payPalService;
     }
     // http://localhost:8081/api/v1/booking/add
     @PostMapping("/add")
@@ -43,7 +46,19 @@ public class BookingController {
         }
 
         bookingService.save(booking);
-        return ResponseEntity.ok(booking);
+
+        PaymentOrder paymentOrder = payPalService.createPayment(Double.valueOf(booking.getPrice()), "ROSKY1", 
+                                    booking.getFlight().getIdflights().toString(), booking.getBookingReference());
+
+        if("success".equals(paymentOrder.getStatus())){
+            return ResponseEntity.ok(Map.of("status", "success", "redirectUrl", paymentOrder.getRedirectUrl()));
+        } else if("canceled".equals(paymentOrder.getStatus())){
+            return ResponseEntity.ok(Map.of("status", "canceled", "redirectUrl", payPalService.getCancelUrl()));
+        } else {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Error creating payment");
+        }
+
+        // return ResponseEntity.ok(booking);
 
     }
 

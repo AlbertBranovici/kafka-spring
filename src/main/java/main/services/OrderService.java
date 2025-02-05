@@ -1,6 +1,6 @@
 package main.services;
 
-import main.models.OrderStatus;
+import main.models.OrderEntity;
 import main.repositories.OrderRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -15,15 +15,15 @@ public class OrderService {
         this.orderRepository = orderRepository1;
     }
 
-    public Mono<OrderStatus> addOrder(OrderStatus orderStatus) { return orderRepository.save(orderStatus); }
+    public OrderEntity addOrder(OrderEntity orderStatus) { return orderRepository.save(orderStatus); }
 
-    public Mono<OrderStatus> findByOrderId(String orderId) { return orderRepository.findByOrderId(orderId); }
+    public OrderEntity findByOrderId(String orderId) { return orderRepository.findByOrderId(orderId); }
 
-    public Mono<OrderStatus> updateOrder(OrderStatus orderStatus, String orderId){
-        Mono<OrderStatus> existingOrderStatus = orderRepository.findByOrderId(orderId);
-        return existingOrderStatus.flatMap(event ->{
-           event.setStatus(orderStatus.getStatus());
-           return orderRepository.save(event);
+    public Mono<OrderEntity> updateOrder(OrderEntity orderStatus, String orderId){
+        Mono<OrderEntity> existingOrderStatus = Mono.justOrEmpty(orderRepository.findByOrderId(orderId));
+        return existingOrderStatus.flatMap(event -> {
+            event.setStatus(orderStatus.getStatus());
+            return Mono.just(orderRepository.save(event));
         });
     }
 

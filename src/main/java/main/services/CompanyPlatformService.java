@@ -1,10 +1,9 @@
 package main.services;
 
-import main.models.CompanyPlatform;
+import main.models.SecretEntity;
 import main.repositories.CompanyPlatformRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import reactor.core.publisher.Mono;
 
 @Service
 public class CompanyPlatformService {
@@ -15,7 +14,7 @@ public class CompanyPlatformService {
         this.companyPlatformRepository = companyPlatformRepository;
     }
 
-    public Mono<CompanyPlatform> findByIban(String iban) {
+    public SecretEntity findByIban(String iban) {
         return companyPlatformRepository.findCompanyPlatformByIban(iban);
     }
 }

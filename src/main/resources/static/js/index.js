@@ -1,4 +1,3 @@
-
 const endpoint_url = 'https://api-m.sandbox.paypal.com';
 
 function get_access_token(){
@@ -94,13 +93,10 @@ document.addEventListener("DOMContentLoaded", function() {
 
         // Get values from the form
         const name = document.getElementById('name').value;
-        const flightId = document.getElementById('flightId').value; // Make sure the correct ID is used for flightId input
+        const flightId = document.getElementById('flightId').value;
         const flightPrice = document.getElementById('flightPrice').value;
         const iban = "ROSKY1";
         const seats = document.getElementById('seatsInput').value;
-
-        // Debugging alert to show the flight info
-        // alert(`Booking confirmed for ${name} with Flight ID: ${flightId}`);
 
         // Send POST request with fetch
         fetch('http://localhost:8081/api/v1/booking/add', {
@@ -116,17 +112,19 @@ document.addEventListener("DOMContentLoaded", function() {
                 "Content-Type": "application/json; charset=UTF-8"
             }
         })
-            .then(response => response.json())
-            .then(data => {
-                if(data.status === "success" && data.redirectUrl){
-                    window.location.href = data.redirectUrl;
-                } else {
-                    console.error("Error: approval url not found")
-                }
-            })
-            .catch((error) => {
-                console.error('Error:', error);  // Handle errors
-            });
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === "success" && data.redirectUrl) {
+                // Open the payment link in a new window or popup
+                window.open(data.redirectUrl, '_blank', 'width=800,height=600');
+            } else {
+                console.error("Error: approval url not found");
+                console.log(data);
+            }
+        })
+        .catch((error) => {
+            console.error('Error:', error);  // Handle errors
+        });
     });
 
 });

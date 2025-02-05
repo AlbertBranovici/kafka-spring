@@ -1,6 +1,6 @@
 package main.controller;
 
-import main.models.OrderStatus;
+import main.models.OrderEntity;
 import main.services.OrderService;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -21,9 +21,12 @@ public class OrderController {
     }
 
     @GetMapping("/{id}")
-    public Mono<OrderStatus> getOrderById(@PathVariable("id") String id) {
-        return orderService.findByOrderId(id)
-                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Order not found")));
+    public Mono<OrderEntity> getOrderById(@PathVariable("id") String id) {
+        OrderEntity order = orderService.findByOrderId(id);
+        if (order == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Order not found");
+        }
+        return Mono.just(order);
     }
 
 }

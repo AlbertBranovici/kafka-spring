@@ -53,6 +53,7 @@ public class FlightController {
     // http://localhost:8081/api/v1/flight/destination/
     @GetMapping("/destination/{dest}")
     public ResponseEntity<List<FlightEntity>> getFlightByDestination(@PathVariable("dest") String destination) {
+        System.out.println("se cauta");
         List<FlightEntity> flights = flightService.getFlightByArrival(destination);
         if (flights != null && !flights.isEmpty()) {
             return ResponseEntity.ok(flights);

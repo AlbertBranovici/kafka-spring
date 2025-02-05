@@ -1,11 +1,10 @@
 package main.repositories;
 
-import main.models.OrderStatus;
-import org.springframework.data.mongodb.repository.ReactiveMongoRepository;
+import main.models.OrderEntity;
+import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
-import reactor.core.publisher.Mono;
 
 @Repository
-public interface OrderRepository extends ReactiveMongoRepository<OrderStatus, String> {
-    Mono<OrderStatus> findByOrderId(String orderId);
+public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
+    OrderEntity findByOrderId(String orderId);
 }

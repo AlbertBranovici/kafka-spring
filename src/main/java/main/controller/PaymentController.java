@@ -27,15 +27,16 @@ public class PaymentController {
     @PostMapping("/init")
     public PaymentOrder createPayment(@RequestParam(name = "sum") Double sum,
                                       @RequestParam(name = "iban") String iban,
-                                                                           @RequestParam(name="flightId") String flightId,
-                                                                           @RequestParam(name="bookingReference") String bookingReference){
+                                      @RequestParam(name = "flightId") String flightId,
+                                      @RequestParam(name = "bookingReference") String bookingReference) {
         return payPalService.createPayment(sum, iban, flightId, bookingReference);
     }
 
     @PostMapping(value="/capture")
     public CompletedOrder completePayment(@RequestParam("token") String token,
-                                          @RequestParam(name = "iban") String iban){
-        return payPalService.captureOrder(token, iban);
+                                          @RequestParam(name = "iban") String iban,
+                                          @RequestParam(name = "payerID") String payerID) {
+        return payPalService.captureOrder(token, payerID, iban);
     }
 
     @GetMapping(value = "/get")
@@ -46,7 +47,8 @@ public class PaymentController {
 
     @PostMapping("/time")
     public CompletedOrder captureOrder(@RequestParam("token") String token,
-                                       @RequestParam(name = "iban") String iban){
-        return payPalService.captureOrder(token, iban);
+                                       @RequestParam(name = "iban") String iban,
+                                       @RequestParam(name = "payerID") String payerID){
+        return payPalService.captureOrder(token, payerID, iban);
     }
 }

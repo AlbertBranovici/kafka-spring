@@ -3,6 +3,7 @@ package main.models;
 public class CompletedOrder {
     private String status;
     private String payId;
+    private int id;
 
     public CompletedOrder() {
     }
@@ -10,6 +11,11 @@ public class CompletedOrder {
     public CompletedOrder(String status, String payId) {
         this.status = status;
         this.payId = payId;
+    }
+
+    public CompletedOrder(String status, int id) {
+        this.status = status;
+        this.id = id;
     }
 
     public String getStatus() {

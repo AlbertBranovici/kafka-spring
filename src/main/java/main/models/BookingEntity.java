@@ -11,26 +11,30 @@ public class BookingEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name="booking_reference")
+    @Column(name="booking_reference", nullable = false)
     private String bookingReference;
 
     @Column(name="full_name")
     private String full_name;
 
     @ManyToOne
-    @JoinColumn(name="flight_id", nullable=false)
+    @JoinColumn(name="flight_id", nullable=true)
 //    @JsonBackReference
     @JsonIgnoreProperties("bookings")
     private FlightEntity flight;
 
     @Column(name="price")
-    private int price;
+    private Integer price;
 
     @Column(name="status")
-    private String status = "PENDING";
+    private String status;
 
-    @Column(name="seats")
-    private int seats;
+    @Column(name="seats", nullable = false)
+    private int seats = 0;
+
+    @ManyToOne
+    @JoinColumn(name = "customerID", nullable = true)
+    private CustomerEntity customer;
 
     public String getStatus() {
         return status;
